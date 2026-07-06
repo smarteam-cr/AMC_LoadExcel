@@ -1,0 +1,169 @@
+PROMPT PARA CODEX
+
+Antes de escribir código, lee primero el archivo:
+
+contexto_mantenimiento_maquinaria_hubspot.txt
+
+Ese archivo contiene el contexto funcional, reglas de negocio, arquitectura esperada y consideraciones importantes del proyecto.
+
+Tu tarea es crear el proyecto completo en Node.js para implementar la API descrita en el archivo de contexto.
+
+Objetivo:
+Crear una API sencilla que reciba un dealId desde un workflow de HubSpot, consulte los line items del negocio para obtener el código de máquina, busque ese código en todas las hojas de un Google Sheet y cree line items de mantenimiento asociados al deal según los productos y frecuencias marcadas con X en la hoja correspondiente.
+
+Requisitos principales:
+
+1. Crear un proyecto Node.js con Express.
+2. Implementar el endpoint:
+
+POST /api/maintenance/generate-line-items
+
+Body:
+
+{
+  "dealId": "123456789"
+}
+
+3. El endpoint solo debe recibir dealId.
+4. El código de máquina debe obtenerse desde los line items asociados al deal en HubSpot.
+5. Leer Google Sheets usando la API oficial de Google.
+6. Recorrer todas las hojas del Google Sheet.
+7. Buscar coincidencia del código de máquina en cada hoja.
+8. Cuando se encuentre la hoja correcta, leer las filas de productos.
+9. Detectar dinámicamente las columnas:
+   - DESCRIPCION
+   - # PARTE
+   - 250
+   - 500
+   - 1000
+   - 2000
+   - 3000
+   - 5000
+10. Por cada fila válida, buscar el producto en HubSpot por el número de parte.
+11. Crear un line item asociado al deal.
+12. Marcar las propiedades de frecuencia como "Si" cuando la celda tenga una X.
+13. Marcar las propiedades de frecuencia como "No" cuando la celda no tenga X.
+14. Evitar duplicados cuando el workflow se ejecute más de una vez.
+15. Devolver un resumen del proceso.
+16. Crear README.md y .env.example.
+
+Arquitectura obligatoria:
+Usa una arquitectura monolítica sencilla. No implementes arquitectura hexagonal ni patrones innecesariamente complejos.
+
+Estructura esperada:
+
+src/
+  app.js
+  server.js
+  config/
+    env.js
+  routes/
+    maintenance.routes.js
+  controllers/
+    maintenance.controller.js
+  services/
+    maintenance.service.js
+    hubspot.service.js
+    google-sheets.service.js
+  utils/
+    logger.js
+    normalize.js
+  errors/
+    app-error.js
+
+Puedes agregar archivos adicionales solo si son realmente necesarios.
+
+Variables de entorno:
+Crear .env.example con al menos estas variables:
+
+PORT=3000
+HUBSPOT_ACCESS_TOKEN=
+GOOGLE_SHEET_ID=
+GOOGLE_CLIENT_EMAIL=
+GOOGLE_PRIVATE_KEY=
+HUBSPOT_MACHINE_CODE_PROPERTY=codigo_maquina
+HUBSPOT_PRODUCT_PART_NUMBER_PROPERTY=numero_parte
+HUBSPOT_FREQUENCY_250_PROPERTY=frecuencia_250
+HUBSPOT_FREQUENCY_500_PROPERTY=frecuencia_500
+HUBSPOT_FREQUENCY_1000_PROPERTY=frecuencia_1000
+HUBSPOT_FREQUENCY_2000_PROPERTY=frecuencia_2000
+HUBSPOT_FREQUENCY_3000_PROPERTY=frecuencia_3000
+HUBSPOT_FREQUENCY_5000_PROPERTY=frecuencia_5000
+HUBSPOT_MAINTENANCE_GENERATED_PROPERTY=maintenance_generated
+HUBSPOT_MAINTENANCE_SOURCE_MACHINE_CODE_PROPERTY=maintenance_source_machine_code
+HUBSPOT_MAINTENANCE_PART_NUMBER_PROPERTY=maintenance_part_number
+
+Consideraciones técnicas:
+
+- Usa dotenv para variables de entorno.
+- Usa googleapis para Google Sheets.
+- Puedes usar axios o @hubspot/api-client para HubSpot, pero deja el código claro y mantenible.
+- Centraliza la configuración en src/config/env.js.
+- Crea manejo de errores controlado con AppError.
+- Agrega logs simples.
+- Normaliza textos para comparar códigos de máquina y encabezados.
+- La lectura del Google Sheet debe ser tolerante a filas vacías, encabezados y cambios en la cantidad de filas.
+- El sistema debe continuar aunque un producto no exista en HubSpot.
+- No detengas todo el proceso por un producto con error; agrega ese error al resumen.
+
+Funciones esperadas en los servicios:
+
+hubspot.service.js debería incluir funciones similares a:
+
+- getDealLineItems(dealId)
+- getMachineCodeFromLineItems(lineItems)
+- findProductByPartNumber(partNumber)
+- createMaintenanceLineItem({ dealId, product, row, frequencies, machineCode })
+- getExistingMaintenanceLineItems(dealId)
+
+Google Sheets service debería incluir funciones similares a:
+
+- getSpreadsheetSheets()
+- getSheetValues(sheetName)
+- findSheetByMachineCode(machineCode)
+- parseMaintenanceRows(values)
+
+maintenance.service.js debe orquestar todo el flujo:
+
+- validate dealId
+- get deal line items
+- extract machine code
+- find matching Google Sheet
+- parse rows
+- check duplicates
+- search product by part number
+- create line item
+- return summary
+
+Respuesta esperada del endpoint:
+
+{
+  "success": true,
+  "dealId": "123456789",
+  "codigoMaquina": "123123sdfs",
+  "sheetName": "MINICARGADOR SSL190",
+  "processedRows": 15,
+  "createdLineItems": 13,
+  "skippedDuplicates": 1,
+  "productsNotFound": [],
+  "errors": []
+}
+
+Criterios de aceptación:
+
+1. El proyecto debe iniciar con npm run dev y npm start.
+2. El endpoint debe existir y validar que dealId venga en el body.
+3. El código debe estar separado por responsabilidades.
+4. Debe existir README.md con pasos de instalación y configuración.
+5. Debe existir .env.example.
+6. Debe manejar errores comunes de HubSpot y Google Sheets.
+7. Debe evitar duplicados de line items de mantenimiento.
+8. Debe devolver un resumen claro del resultado.
+9. No debe incluir secretos reales.
+10. No debe usar una arquitectura innecesariamente compleja.
+
+Importante:
+No inventes credenciales ni valores reales. Usa variables de entorno.
+Si hay detalles de HubSpot que dependan de IDs de asociaciones o nombres internos de propiedades, déjalos configurables o claramente documentados en README.md.
+
+Al finalizar, entrega el código fuente completo del proyecto y explica brevemente cómo ejecutarlo.

@@ -1,0 +1,27 @@
+{
+  "name": "hubspot-maintenance-line-items",
+  "version": "1.0.0",
+  "description": "API que genera line items de mantenimiento en un Deal de HubSpot a partir de una matriz en Google Sheets.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "hubspot",
+    "google-sheets",
+    "maintenance",
+    "line-items"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}

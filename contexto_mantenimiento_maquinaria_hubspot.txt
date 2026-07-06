@@ -1,0 +1,221 @@
+CONTEXTO DEL PROYECTO
+
+Nombre sugerido del proyecto:
+hubspot-maintenance-line-items
+
+Objetivo general:
+Crear una API sencilla en Node.js para un cliente específico, cuyo propósito es generar elementos de pedido (line items) de mantenimiento dentro de un negocio de HubSpot, tomando como referencia una matriz de mantenimiento almacenada en Google Sheets.
+
+Contexto del negocio:
+El cliente vende maquinaria y también vende mantenimientos relacionados con esas máquinas. Para cada máquina existe una tabla en Google Sheets que define cuáles productos/repuestos/servicios deben agregarse al mantenimiento y en qué frecuencias aplican.
+
+El Google Sheet del cliente tiene muchas hojas. Cada hoja representa una máquina o modelo de máquina. En cada hoja existe una tabla similar a la siguiente estructura:
+
+- Código Máquina: valor único de la máquina.
+- Descripción del producto o repuesto.
+- # Parte: número de parte del producto.
+- Capacidad de equipo.
+- Capacidad de caneca.
+- Frecuencias: 250, 500, 1000, 2000, 3000, 5000.
+
+Cuando una celda de frecuencia tiene una X, significa que ese producto aplica para esa frecuencia.
+
+Ejemplo conceptual:
+Producto: FILTRO ACEITE MOTOR
+# Parte: 02/630935A
+Frecuencia 250: X
+Frecuencia 500: X
+Frecuencia 1000: X
+Frecuencia 2000: X
+Frecuencia 3000: X
+Frecuencia 5000: X
+
+Entonces, al crear el line item en HubSpot, las propiedades de frecuencia del elemento de pedido deben marcarse como "Si".
+
+Flujo esperado:
+
+1. Un workflow de HubSpot llamará una API externa.
+2. La API será:
+   POST /api/maintenance/generate-line-items
+3. Esta API recibirá únicamente el dealId.
+4. Con el dealId, la API debe consultar los line items actualmente asociados al negocio en HubSpot.
+5. A partir de esos line items debe obtener el código de máquina.
+6. Con el código de máquina debe leer el Google Sheet del cliente.
+7. Debe buscar en todas las hojas del Google Sheet si alguna hoja contiene ese código de máquina.
+8. Cuando encuentre la hoja correspondiente, debe leer las filas de productos/repuestos/mantenimientos.
+9. Por cada fila válida, debe tomar el # Parte.
+10. Con el # Parte debe buscar el producto correspondiente en HubSpot.
+11. Si el producto existe, debe crear un nuevo line item asociado al negocio.
+12. El nuevo line item debe heredar o usar la información del producto de HubSpot y debe completar las propiedades de frecuencia según las X encontradas en Google Sheets.
+
+Endpoint principal:
+
+POST /api/maintenance/generate-line-items
+
+Body esperado:
+
+{
+  "dealId": "123456789"
+}
+
+Importante:
+La API NO recibirá el código de máquina directamente. Solo recibirá el dealId. El código de máquina debe obtenerse desde los line items actuales del negocio.
+
+Arquitectura esperada:
+
+Este proyecto es para un cliente específico. No se necesita una arquitectura compleja ni multi-tenant.
+Se recomienda una arquitectura monolítica sencilla y ordenada, separando responsabilidades por carpetas.
+
+Arquitectura sugerida:
+
+src/
+  app.js
+  server.js
+  config/
+    env.js
+  routes/
+    maintenance.routes.js
+  controllers/
+    maintenance.controller.js
+  services/
+    maintenance.service.js
+    hubspot.service.js
+    google-sheets.service.js
+  utils/
+    logger.js
+    normalize.js
+  errors/
+    app-error.js
+
+No usar arquitectura hexagonal compleja para este caso. Mantener el proyecto simple, entendible y fácil de mantener.
+
+Responsabilidades sugeridas:
+
+- routes: declarar rutas Express.
+- controllers: validar request básico y responder HTTP.
+- services/maintenance.service.js: orquestar todo el proceso.
+- services/hubspot.service.js: comunicación con HubSpot API.
+- services/google-sheets.service.js: comunicación con Google Sheets API.
+- utils: funciones auxiliares para normalizar textos, validar X, comparar códigos, etc.
+- config/env.js: centralizar variables de entorno.
+
+Variables de entorno sugeridas:
+
+PORT=3000
+HUBSPOT_ACCESS_TOKEN=
+GOOGLE_SHEET_ID=
+GOOGLE_CLIENT_EMAIL=
+GOOGLE_PRIVATE_KEY=
+HUBSPOT_MACHINE_CODE_PROPERTY=codigo_maquina
+HUBSPOT_PRODUCT_PART_NUMBER_PROPERTY=numero_parte
+HUBSPOT_FREQUENCY_250_PROPERTY=frecuencia_250
+HUBSPOT_FREQUENCY_500_PROPERTY=frecuencia_500
+HUBSPOT_FREQUENCY_1000_PROPERTY=frecuencia_1000
+HUBSPOT_FREQUENCY_2000_PROPERTY=frecuencia_2000
+HUBSPOT_FREQUENCY_3000_PROPERTY=frecuencia_3000
+HUBSPOT_FREQUENCY_5000_PROPERTY=frecuencia_5000
+
+Notas sobre HubSpot:
+
+- El negocio es un Deal.
+- Los productos existen en HubSpot y se deben buscar por el número de parte.
+- El número de parte debe estar guardado en una propiedad personalizada del producto, por ejemplo: numero_parte.
+- Los line items creados deben asociarse al deal.
+- Las frecuencias serán propiedades personalizadas en los line items.
+- Las propiedades de frecuencia son de tipo selección Si/No.
+- Cuando una frecuencia tiene X en Google Sheets, se debe enviar "Si".
+- Cuando una frecuencia no tiene X, se puede enviar "No" o dejar vacío, según sea más conveniente. Preferencia inicial: enviar "No" para mantener consistencia.
+
+Notas sobre Google Sheets:
+
+- El Google Sheet tiene muchas hojas.
+- Cada hoja representa una máquina.
+- La cantidad de filas puede cambiar.
+- Puede haber más o menos productos según la máquina.
+- Se debe recorrer todas las hojas hasta encontrar una coincidencia con el código de máquina.
+- La estructura visual puede tener encabezados, celdas vacías y títulos. Por eso la lectura debe ser tolerante.
+- Se debe buscar de forma flexible la ubicación de las columnas importantes:
+  - DESCRIPCION
+  - # PARTE
+  - 250
+  - 500
+  - 1000
+  - 2000
+  - 3000
+  - 5000
+- El código de máquina puede estar en una celda con una etiqueta cercana como "Codigo Maquina".
+- La comparación del código de máquina debe normalizar espacios y mayúsculas/minúsculas.
+
+Reglas de negocio:
+
+1. Si el dealId no viene en el body, responder error 400.
+2. Si el deal no existe o no se puede consultar, responder error controlado.
+3. Si no se encuentran line items asociados al deal, responder indicando que no hay line items para obtener el código de máquina.
+4. Si no se encuentra el código de máquina en los line items, responder indicando que no fue posible determinar el código de máquina.
+5. Si no se encuentra una hoja del Google Sheet que coincida con el código de máquina, responder indicando que no existe matriz de mantenimiento para esa máquina.
+6. Si una fila no tiene # Parte, debe ignorarse.
+7. Si el producto no existe en HubSpot, no debe detener todo el proceso. Debe registrar el error y continuar con los demás productos.
+8. Debe devolver un resumen con:
+   - dealId
+   - codigoMaquina
+   - hoja encontrada
+   - cantidad de productos procesados
+   - cantidad de line items creados
+   - productos no encontrados
+   - errores encontrados
+
+Prevención de duplicados:
+
+El proceso puede ejecutarse más de una vez desde un workflow. Se debe considerar una estrategia simple para evitar duplicados.
+
+Opción recomendada:
+Antes de crear un line item, revisar si ya existe en el deal un line item con el mismo # Parte y que haya sido creado por este proceso.
+
+Para esto se puede usar una propiedad personalizada en el line item, por ejemplo:
+maintenance_generated = true
+maintenance_source_machine_code = código de máquina
+maintenance_part_number = número de parte
+
+Si ya existe un line item con el mismo maintenance_part_number y maintenance_source_machine_code, no crearlo nuevamente.
+
+Respuesta esperada del endpoint:
+
+{
+  "success": true,
+  "dealId": "123456789",
+  "codigoMaquina": "123123sdfs",
+  "sheetName": "MINICARGADOR SSL190",
+  "processedRows": 15,
+  "createdLineItems": 13,
+  "skippedDuplicates": 1,
+  "productsNotFound": [
+    {
+      "partNumber": "4001/1805E",
+      "description": "ACEITE CAJA DE CADENA"
+    }
+  ],
+  "errors": []
+}
+
+Tecnologías sugeridas:
+
+- Node.js
+- Express
+- @hubspot/api-client o axios para HubSpot
+- googleapis para Google Sheets
+- dotenv
+- zod o validación manual sencilla
+- nodemon para desarrollo
+
+Entregables esperados:
+
+- Proyecto Node.js funcional.
+- package.json con scripts.
+- .env.example.
+- README.md con instrucciones de instalación, variables de entorno y uso.
+- Código fuente organizado.
+- Manejo de errores básico.
+- Logs básicos.
+- Endpoint principal implementado.
+- Servicios separados para HubSpot y Google Sheets.
+
