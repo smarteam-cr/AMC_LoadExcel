@@ -33,7 +33,16 @@ function toUpstreamError(error, action) {
 }
 
 function associationIds(deal, name) {
-  return (deal.associations?.[name]?.results || []).map((r) => r.id).filter(Boolean);
+  const associations = deal.associations || {};
+  // HubSpot v3 devuelve la clave de asociación con nombre "legible": p. ej.
+  // los line items llegan bajo "line items" (con espacio), no "line_items".
+  // Normalizamos las claves (espacios/guiones bajos) para tolerar ambas variantes.
+  const target = name.replace(/[\s_]+/g, '');
+  const key = Object.keys(associations).find(
+    (k) => k.replace(/[\s_]+/g, '') === target
+  );
+  if (!key) return [];
+  return (associations[key]?.results || []).map((r) => r.id).filter(Boolean);
 }
 
 /**
@@ -193,11 +202,14 @@ async function createDeal({ name, ownerId, companyIds = [], contactIds = [] }) {
 }
 
 /**
- * Crea un line item de mantenimiento asociado al deal indicado.
+ * Construye las propiedades de un line item de mantenimiento a partir del
+ * producto y la fila de la matriz.
  * - Hereda el producto vía hs_product_id (HubSpot completa precio/nombre).
- * - Marca como "Si" únicamente las frecuencias con X (las demás no se envían).
+ * - Envía cada frecuencia como booleano: true si tiene X, false si no.
+ * - `position` fija el orden de visualización (hs_position_on_quote) para que
+ *   los line items queden como en el Excel.
  */
-async function createMaintenanceLineItem({ dealId, product, row }) {
+function buildLineItemProperties({ product, row, position }) {
   const h = env.hubspot;
 
   const properties = {
@@ -206,34 +218,102 @@ async function createMaintenanceLineItem({ dealId, product, row }) {
     name: product.properties?.name || row.description || `Parte ${row.partNumber}`,
   };
 
-  // Solo se envían las frecuencias marcadas con X.
-  for (const freq of env.frequencies) {
-    if (!row.frequencies[freq]) continue;
-    const propName = h.frequencyProperties[freq];
-    if (propName) properties[propName] = h.frequencyValueYes;
+  if (Number.isInteger(position)) {
+    properties.hs_position_on_quote = String(position);
   }
 
-  const payload = {
-    properties,
-    associations: [
+  for (const freq of env.frequencies) {
+    const propName = h.frequencyProperties[freq];
+    if (propName) {
+      properties[propName] = row.frequencies[freq] ? h.frequencyValueYes : h.frequencyValueNo;
+    }
+  }
+
+  return properties;
+}
+
+/**
+ * Construye la asociación line item -> deal para los payloads de creación.
+ */
+function lineItemToDealAssociation(dealId) {
+  const h = env.hubspot;
+  return {
+    to: { id: String(dealId) },
+    types: [
       {
-        to: { id: String(dealId) },
-        types: [
-          {
-            associationCategory: 'HUBSPOT_DEFINED',
-            associationTypeId: h.lineItemToDealAssociationTypeId,
-          },
-        ],
+        associationCategory: 'HUBSPOT_DEFINED',
+        associationTypeId: h.lineItemToDealAssociationTypeId,
       },
     ],
   };
+}
 
+/**
+ * Archiva (elimina) line items por lote. Se usa como rollback cuando una
+ * creación en bloque queda parcialmente completa.
+ */
+async function deleteLineItems(ids) {
+  const list = (ids || []).map(String).filter(Boolean);
+  if (list.length === 0) return;
   try {
-    const resp = await client.post('/crm/v3/objects/line_items', payload);
-    return resp.data;
+    await client.post('/crm/v3/objects/line_items/batch/archive', {
+      inputs: list.map((id) => ({ id })),
+    });
   } catch (error) {
-    throw toUpstreamError(error, 'createMaintenanceLineItem');
+    // El rollback es best-effort: registramos pero no enmascaramos el error real.
+    logger.error('No se pudo hacer rollback de line items:', JSON.stringify(list), error.message);
   }
+}
+
+/**
+ * Crea en bloque todos los line items de mantenimiento asociados al deal.
+ * Semántica "todo o nada": si HubSpot reporta cualquier fallo parcial, se
+ * archivan los que sí se crearon y se lanza un error. No se dejan line items
+ * a medias en el deal.
+ *
+ * @param {{ dealId: string|number, items: Array<{product: object, row: object}> }} args
+ * @returns {Promise<Array>} line items creados.
+ */
+async function createMaintenanceLineItemsBatch({ dealId, items }) {
+  if (!items || items.length === 0) return [];
+
+  // El índice preserva el orden del Excel vía hs_position_on_quote.
+  const inputs = items.map(({ product, row }, index) => ({
+    properties: buildLineItemProperties({ product, row, position: index }),
+    associations: [lineItemToDealAssociation(dealId)],
+  }));
+
+  let resp;
+  try {
+    resp = await client.post('/crm/v3/objects/line_items/batch/create', { inputs });
+  } catch (error) {
+    // Fallo total (4xx/5xx): HubSpot no creó nada, no hay nada que revertir.
+    throw toUpstreamError(error, 'createMaintenanceLineItemsBatch');
+  }
+
+  const created = resp.data?.results || [];
+
+  // 207 MULTI_STATUS o cuerpo con errores => éxito parcial. Rollback + error.
+  const partial =
+    resp.status === 207 ||
+    (resp.data?.numErrors && resp.data.numErrors > 0) ||
+    (Array.isArray(resp.data?.errors) && resp.data.errors.length > 0) ||
+    created.length !== items.length;
+
+  if (partial) {
+    await deleteLineItems(created.map((li) => li.id));
+    logger.error(
+      `Creación parcial de line items (${created.length}/${items.length}). ` +
+        `Se revirtieron los creados. Respuesta: ${JSON.stringify(resp.data)}`
+    );
+    throw AppError.upstream(
+      'HubSpot no pudo crear todos los line items; no se insertó ninguno.',
+      'LINE_ITEMS_PARTIAL_FAILURE',
+      { created: created.length, expected: items.length, body: resp.data }
+    );
+  }
+
+  return created;
 }
 
 module.exports = {
@@ -242,5 +322,6 @@ module.exports = {
   findProductBySku,
   getFirstPipelineStage,
   createDeal,
-  createMaintenanceLineItem,
+  createMaintenanceLineItemsBatch,
+  deleteLineItems,
 };

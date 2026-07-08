@@ -74,41 +74,62 @@ async function generateLineItems(dealId) {
     sheetName: sheet.sheetName,
     newDealId: newDeal.id,
     processedRows: rows.length,
+    lineItemsInserted: false,
     createdLineItems: 0,
     productsNotFound: [],
     errors: [],
   };
 
-  // 6) Crear line items en el nuevo deal (un fallo no detiene el resto).
-  // Cada fila genera su propio line item: un mismo SKU puede aparecer en
-  // varias filas con frecuencias distintas. Cacheamos la búsqueda del
-  // producto por SKU para no repetir llamadas a HubSpot.
+  // 6) Resolver TODOS los productos por SKU antes de insertar nada.
+  // Cacheamos la búsqueda por SKU para no repetir llamadas a HubSpot cuando
+  // un mismo SKU aparece en varias filas.
   const productCache = new Map();
+  const resolved = []; // { product, row } listos para crear el line item.
   for (const row of rows) {
-    try {
-      const key = normalizeCode(row.partNumber);
-      if (!productCache.has(key)) {
-        productCache.set(key, await hubspot.findProductBySku(row.partNumber));
-      }
-      const product = productCache.get(key);
-      if (!product) {
-        summary.productsNotFound.push({
-          partNumber: row.partNumber,
-          description: row.description,
-        });
-        continue;
-      }
-
-      await hubspot.createMaintenanceLineItem({ dealId: newDeal.id, product, row });
-      summary.createdLineItems += 1;
-    } catch (error) {
-      logger.error(`Error procesando la parte ${row.partNumber}:`, error.message);
-      summary.errors.push({
+    const key = normalizeCode(row.partNumber);
+    if (!productCache.has(key)) {
+      productCache.set(key, await hubspot.findProductBySku(row.partNumber));
+    }
+    const product = productCache.get(key);
+    if (!product) {
+      summary.productsNotFound.push({
         partNumber: row.partNumber,
         description: row.description,
-        message: error.message,
       });
+      continue;
     }
+    resolved.push({ product, row });
+  }
+
+  // Regla "todo o nada": si falta algún producto en HubSpot, no se inserta
+  // ningún line item; el vendedor los cargará manualmente en el nuevo deal.
+  if (summary.productsNotFound.length > 0) {
+    summary.message =
+      `No se insertó ningún line item porque ${summary.productsNotFound.length} ` +
+      'producto(s) no existen en HubSpot. Cárguelos manualmente en el nuevo deal.';
+    logger.warn(
+      `Deal ${dealId}: ${summary.productsNotFound.length} productos no encontrados. ` +
+        'No se insertan line items (todo o nada).'
+    );
+    return summary;
+  }
+
+  // 7) Inserción en bloque (todo o nada). Ante cualquier fallo parcial el
+  // servicio revierte lo creado, de modo que el deal nunca queda a medias.
+  try {
+    const created = await hubspot.createMaintenanceLineItemsBatch({
+      dealId: newDeal.id,
+      items: resolved,
+    });
+    summary.lineItemsInserted = true;
+    summary.createdLineItems = created.length;
+  } catch (error) {
+    summary.success = false;
+    summary.message =
+      'El deal se creó pero no se insertó ningún line item por un error en HubSpot; ' +
+      'cárguelos manualmente en el nuevo deal.';
+    summary.errors.push({ message: error.message, code: error.code });
+    logger.error(`Deal ${dealId}: falló la inserción en bloque de line items.`, error.message);
   }
 
   logger.info(

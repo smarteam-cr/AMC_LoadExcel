@@ -117,12 +117,20 @@ function parseMaintenanceRows(values) {
   }
 
   const rows = [];
+  let started = false;
   for (let r = freqRowIndex + 1; r < values.length; r += 1) {
     const row = values[r] || [];
     if (isNoteRow(row)) break; // fin de la tabla de mantenimiento
 
     const partNumber = (row[textColumns.partNumber] || '').toString().trim();
-    if (!partNumber) continue; // regla: sin # Parte se ignora
+    if (!partNumber) {
+      // La tabla de productos termina en la primera fila vacía (sin # Parte)
+      // que aparece después de que empezó. Todo lo que hay debajo (leyendas,
+      // equivalencias, notas) queda fuera y no se ingresa como line item.
+      if (started) break;
+      continue; // filas vacías antes de la primera fila de datos: se saltan
+    }
+    started = true;
 
     const description =
       textColumns.description !== -1 ? (row[textColumns.description] || '').toString().trim() : '';

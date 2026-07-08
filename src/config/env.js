@@ -56,8 +56,9 @@ const env = {
       2000: optional('HUBSPOT_FREQUENCY_2000_PROPERTY', 'frec_2000'),
       8000: optional('HUBSPOT_FREQUENCY_8000_PROPERTY', 'frec_8000'),
     },
-    // Valor enviado cuando la frecuencia tiene una "X". Las demás no se envían.
-    frequencyValueYes: optional('HUBSPOT_FREQUENCY_VALUE_YES', 'Si'),
+    // Valores enviados según la frecuencia: "X" -> yes, sin marcar -> no.
+    frequencyValueYes: optional('HUBSPOT_FREQUENCY_VALUE_YES', 'true'),
+    frequencyValueNo: optional('HUBSPOT_FREQUENCY_VALUE_NO', 'false'),
 
     // Configuración del nuevo deal (réplica del original).
     defaultDealPipeline: required('HUBSPOT_DEFAULT_DEAL_PIPELINE'),
